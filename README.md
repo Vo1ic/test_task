@@ -1,68 +1,75 @@
-# QA Аудит дзвінків автосервісу
+# Auto Service QA Call Audit
 
-Проєкт для автоматизації аудиту телефонних розмов менеджерів СТО. Скрипт інтегрується з Google Drive, завантажує записи розмов, перетворює їх на текст за допомогою Google Web Speech API, аналізує локальною нейромережею (LLM) безкоштовно та формує розгорнутий звіт-таблицю у Google Sheets.
+A project for automating the audit of phone conversations between auto service managers and clients. The script integrates with Google Drive, downloads call recordings, transcribes them using a GPU-accelerated pipeline (pyannote.audio, faster-whisper), analyzes them via a local neural network (Qwen2.5-7B) on the GPU, and generates a detailed report table in Google Sheets.
 
-Проєкт знаходиться на стадії MVP (Minimum Viable Product): основний функціонал повністю працює, проте система все ще потребує подальшого вдосконалення.
-
-## 🛠 Відомі проблеми
-Наразі у проєкті є певні невирішені питання (як дрібні, так і архітектурні). Головна проблема полягає в тому, що **не все аудіо коректно розпізнається та перетворюється на текст** (через обмеження безкоштовного API або якість самого запису). Це, у свою чергу, призводить до каскадних проблем на етапі подальшого ШІ-аналізу, оскільки модель спирається на неповний або викривлений текст транскрипції. Також час від часу можливі затримки при локальній обробці великих файлів.
+The entire process is strictly optimized for GPUs with 12 GB VRAM (total memory consumption up to ~11 GB).
 
 ---
 
-## 💻 Детальна інструкція з використання
+## 💻 Detailed Usage Instructions
 
-### 1. Підготовка Google Cloud (Отримання доступів)
-Оскільки скрипт створює файли від вашого імені на вашому Google Диску, вам потрібно отримати файл авторизації `client_secret.json`:
-1. Перейдіть до [Google Cloud Console](https://console.cloud.google.com/).
-2. Створіть новий проєкт (або оберіть існуючий).
-3. Зліва в меню відкрийте **APIs & Services** -> **Library**. Знайдіть та увімкніть два API:
+### 1. Google Cloud Preparation (Obtaining Access)
+Since the script creates files on your behalf in your Google Drive, you need to obtain the `client_secret.json` authorization file:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (or select an existing one).
+3. On the left menu, open **APIs & Services** -> **Library**. Find and enable two APIs:
    - **Google Drive API**
    - **Google Sheets API**
-4. Перейдіть у **APIs & Services** -> **OAuth consent screen**:
-   - Оберіть **External**, натисніть Create.
-   - Заповніть обов'язкові поля (назва додатку, ваш email).
-   - На кроці "Test users" обов'язково **додайте свій email** (наприклад, `your.email@gmail.com`).
-5. Перейдіть у **APIs & Services** -> **Credentials**:
-   - Натисніть **+ CREATE CREDENTIALS** -> **OAuth client ID**.
-   - Оберіть **Application type**: `Desktop app`.
-   - Натисніть **Create**, а потім завантажте JSON-файл (кнопка ⬇️).
-6. Перейменуйте завантажений файл на `client_secret.json` і покладіть його в головну папку цього проєкту.
+4. Go to **APIs & Services** -> **OAuth consent screen**:
+   - Choose **External**, click Create.
+   - Fill in the required fields (app name, your email).
+   - On the "Test users" step, **add your email** (e.g., `your.email@gmail.com`).
+5. Go to **APIs & Services** -> **Credentials**:
+   - Click **+ CREATE CREDENTIALS** -> **OAuth client ID**.
+   - Select **Application type**: `Desktop app`.
+   - Click **Create**, then download the JSON file (⬇️ button).
+6. Rename the downloaded file to `client_secret.json` and place it in the root folder of this project.
 
-### 2. Налаштування папок у коді
-У файлі `google_services.py` (рядки 25-28) вкажіть правильні ID папок вашого Google Диска:
-- `SHARED_FOLDER_ID`: ID спільної папки, звідки скрипт буде **читати** оригінальні аудіофайли.
-- `REPORT_FOLDER_ID`: ID вашої робочої папки, куди скрипт буде **зберігати** копії аудіо, файли транскрипцій (`.txt`) та сам звіт (Google Sheets).
+### 2. Folder Configuration
+In `google_services.py` (lines 29-32), specify the correct Google Drive folder IDs:
+- `SHARED_FOLDER_ID`: The ID of the shared folder where the script will **read** the original audio files from.
+- `REPORT_FOLDER_ID`: The ID of your workspace folder where the script will **save** audio copies, transcription files (`.txt`), and the final report (Google Sheets).
 
-*(ID папки — це довгий набір символів у посиланні браузера після `folders/`)*.
+*(The folder ID is the long string of characters in the browser URL after `folders/`)*.
 
-### 3. Встановлення залежностей
-Проєкт використовує локальну LLM через `llama-cpp-python`, що потребує спеціального налаштування на Windows (завантаження pre-built wheels). 
-Запустіть скрипт конфігурації (він сам створить віртуальне середовище `python -m venv .venv` та встановить усі необхідні версії бібліотек):
+### 3. Environment Variables (.env)
+The project relies on environment variables for sensitive tokens.
+1. Copy the provided `.env.example` file to a new file named `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Open `.env` and fill in your Hugging Face token.
+   - Register on [Hugging Face](https://huggingface.co/) and create an Access Token (Read permissions).
+   - Accept the terms for [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0).
+
+### 4. Dependency Installation and GPU Setup
+The project uses CUDA for maximum acceleration of transcription and LLM analysis.
+Run the setup script (it will detect your CUDA version, create a virtual environment `python -m venv .venv`, and install all necessary packages, pinning exact working versions like PyTorch with CUDA and llama-cpp-python):
 ```powershell
 .\setup.ps1
 ```
 
-### 4. Перший запуск та Авторизація
-Активуйте віртуальне середовище та запустіть головний скрипт:
+### 5. First Run and Authorization
+Activate the virtual environment and run the main script:
 ```powershell
 .\.venv\Scripts\activate
 python main.py
 ```
-**Що відбудеться при першому запуску:**
-1. Скрипт автоматично завантажить нейромережу `Qwen2.5-3B-Instruct` (~1.9 ГБ). Це робиться лише один раз, файл збережеться в папці `models/`.
-2. Відкриється вікно браузера з проханням увійти у ваш Google-акаунт. 
-3. Оскільки ваш додаток у статусі тестування, Google може попередити: *"Google hasn't verified this app"*. Натисніть **Advanced (Додатково)** -> **Go to [Назва] (unsafe)** і надайте дозволи на роботу з Диском.
-4. Скрипт збереже `token.json` в папці проєкту і браузер більше не відкриватиметься при наступних запусках.
+**What happens on the first run:**
+1. The script will automatically download the `Qwen2.5-7B-Instruct-Q3_K_M.gguf` neural network (~3 GB) and the transcription models (Whisper large-v3, pyannote). This is done only once.
+2. A browser window will open asking you to log into your Google account.
+3. Since your app is in testing status, Google may warn: *"Google hasn't verified this app"*. Click **Advanced** -> **Go to [Name] (unsafe)** and grant the required Drive and Sheets permissions.
+4. The script will save `token.json` in the project folder so the browser won't open on subsequent runs.
 
-### 5. Як працює скрипт (Процес)
-Після успішного запуску скрипт працює повністю автоматично в конвеєрному режимі:
-1. Створює нову Google Таблицю у вашій папці `REPORT_FOLDER_ID`.
-2. Знаходить всі `.mp3` файли у спільній папці.
-3. По черзі для кожного дзвінка:
-   - Копіює `mp3` у вашу робочу папку.
-   - Транскрибує аудіо в текст локально.
-   - Завантажує текст (`.txt`) на Google Drive у вашу папку поруч із аудіофайлом.
-   - Аналізує розмову за 8 критеріями через локальний ШІ.
-   - Записує рядок з оцінками у Google Таблицю.
-4. Якщо загальна оцінка дзвінка < 7 балів, клітинка з коментарем автоматично підсвічується червоним кольором.
-5. По завершенню обробки всіх файлів, скрипт додає формулу `=SUM()` для підбиття фінального рахунку і виводить у консоль зручне посилання на готовий звіт.
+### 6. How the Script Works (Workflow)
+After a successful launch, the script operates fully automatically in a pipeline mode:
+1. Creates a new Google Spreadsheet in your `REPORT_FOLDER_ID` folder.
+2. Locates all `.mp3` files in the shared folder.
+3. Sequentially processes each call:
+   - Copies the `mp3` to your workspace folder.
+   - Transcribes the audio locally on the GPU (Diarization -> Whisper ASR) with smart VRAM management.
+   - Uploads the structured dialogue text (`.txt`) to Google Drive next to the copied audio file.
+   - Analyzes the conversation against service station quality criteria using the local AI (Qwen2.5-7B) on the GPU.
+   - Appends a row with the scores to the Google Spreadsheet.
+4. If the overall call score is < 7 points, the comment cell is automatically highlighted in red.
+5. After processing all files, the script adds a `=SUM()` formula to calculate the final score and outputs a convenient link to the generated report in the console.

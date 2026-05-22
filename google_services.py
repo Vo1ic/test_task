@@ -1,7 +1,6 @@
 """
-Модуль для роботи з Google Drive та Google Sheets.
-Відповідає за OAuth2 авторизацію користувача,
-завантаження файлів з Drive та створення таблиць.
+Module for interacting with Google Drive and Google Sheets.
+Handles OAuth2 user authorization, downloading files from Drive, and creating spreadsheets.
 """
 
 import io
@@ -20,16 +19,16 @@ import gspread
 
 logger = logging.getLogger(__name__)
 
-# Дозволи, необхідні для роботи з Drive та Sheets
+# Required scopes for Drive and Sheets API
 SCOPES = [
     "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
-# ID розшареної папки на Google Drive (для читання аудіо)
+# ID of the shared Google Drive folder (for reading audio files)
 SHARED_FOLDER_ID = "1R3hDscEc_Ujh1FytqWROg4tS__qcO1Ub"
 
-# ID папки для збереження звіту (Google Sheets)
+# ID of the folder for saving the report (Google Sheets)
 REPORT_FOLDER_ID = "1jGBXn4w_vkb-NwneUJowEOhY-YNch7NL"
 
 CALLS_SUBFOLDER_NAME = "Дзвінки"
@@ -37,63 +36,63 @@ CALLS_SUBFOLDER_NAME = "Дзвінки"
 
 class GoogleServicesClient:
     """
-    Клієнт для взаємодії з Google Drive та Google Sheets через OAuth2.
+    Client for interacting with Google Drive and Google Sheets via OAuth2.
     """
 
     def __init__(self, client_secret_path: str = "client_secret.json", token_path: str = "token.json") -> None:
         self._credentials = self._authenticate(client_secret_path, token_path)
         self._drive_service = build("drive", "v3", credentials=self._credentials)
         self._gc = gspread.authorize(self._credentials)
-        logger.info("GoogleServicesClient успішно ініціалізовано (OAuth2).")
+        logger.info("GoogleServicesClient successfully initialized (OAuth2).")
 
     def _authenticate(self, client_secret_path: str, token_path: str) -> Credentials:
         """
-        Обробляє OAuth2 авторизацію. Завантажує існуючий токен або відкриває браузер.
+        Handles OAuth2 authorization. Loads an existing token or opens the browser.
         """
         creds = None
         
-        # Завантажуємо існуючий токен, якщо він є
+        # Load existing token if available
         if os.path.exists(token_path):
             try:
                 creds = Credentials.from_authorized_user_file(token_path, SCOPES)
             except Exception as e:
-                logger.warning("Не вдалося завантажити token.json: %s", e)
+                logger.warning("Failed to load token.json: %s", e)
 
-        # Якщо токена немає, або він невалідний
+        # If token doesn't exist or is invalid
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 try:
-                    logger.info("Оновлення існуючого токена доступу...")
+                    logger.info("Refreshing existing access token...")
                     creds.refresh(Request())
                 except Exception as e:
-                    logger.warning("Не вдалося оновити токен (%s), потрібна нова авторизація.", e)
+                    logger.warning("Failed to refresh token (%s), new authorization required.", e)
                     creds = None
 
             if not creds:
-                logger.info("Потрібна авторизація. Відкриття браузера...")
+                logger.info("Authorization required. Opening browser...")
                 if not os.path.exists(client_secret_path):
                     raise FileNotFoundError(
-                        f"Файл {client_secret_path} не знайдено! "
-                        "Будь ласка, завантажте OAuth 2.0 Client ID (тип Desktop App) з Google Cloud Console."
+                        f"File {client_secret_path} not found! "
+                        "Please download OAuth 2.0 Client ID (Desktop App type) from Google Cloud Console."
                     )
                 flow = InstalledAppFlow.from_client_secrets_file(
                     client_secret_path, SCOPES
                 )
                 creds = flow.run_local_server(port=0)
 
-            # Зберігаємо токен для наступних запусків
+            # Save the token for future runs
             with open(token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(creds.to_json())
-                logger.info("Новий токен доступу збережено у %s", token_path)
+                logger.info("New access token saved to %s", token_path)
 
         return creds
 
     # ------------------------------------------------------------------ #
-    #  Drive — пошук папок та файлів
+    #  Drive - Folder and File Search
     # ------------------------------------------------------------------ #
 
     def _find_folder_id(self, folder_name: str, parent_id: str) -> Optional[str]:
-        """Знаходить ID папки за назвою всередині батьківської папки."""
+        """Finds the ID of a folder by name within a parent folder."""
         query = (
             f"name='{folder_name}' "
             f"and '{parent_id}' in parents "
@@ -108,12 +107,12 @@ class GoogleServicesClient:
         )
         files = response.get("files", [])
         if not files:
-            logger.warning("Папку '%s' не знайдено в '%s'.", folder_name, parent_id)
+            logger.warning("Folder '%s' not found in '%s'.", folder_name, parent_id)
             return None
         return files[0]["id"]
 
     def _list_mp3_files(self, folder_id: str) -> list[dict]:
-        """Повертає список усіх .mp3 файлів у вказаній папці."""
+        """Returns a list of all .mp3 files in the specified folder."""
         query = (
             f"'{folder_id}' in parents "
             f"and mimeType='audio/mpeg' "
@@ -128,35 +127,35 @@ class GoogleServicesClient:
         return response.get("files", [])
 
     # ------------------------------------------------------------------ #
-    #  Drive — завантаження файлів
+    #  Drive - File Download
     # ------------------------------------------------------------------ #
 
     def get_mp3_files_meta(self) -> list[dict]:
         """
-        Знаходить папку 'Дзвінки' у спільній папці та повертає список метаданих
-        всіх .mp3 файлів (id, name).
+        Locates the 'Calls' folder in the shared folder and returns metadata
+        for all .mp3 files (id, name).
         """
         calls_folder_id = self._find_folder_id(CALLS_SUBFOLDER_NAME, SHARED_FOLDER_ID)
         if calls_folder_id is None:
-            logger.error("Не вдалося знайти папку '%s'.", CALLS_SUBFOLDER_NAME)
+            logger.error("Failed to find folder '%s'.", CALLS_SUBFOLDER_NAME)
             return []
 
         mp3_files = self._list_mp3_files(calls_folder_id)
         if not mp3_files:
-            logger.warning("У папці '%s' немає .mp3 файлів.", CALLS_SUBFOLDER_NAME)
+            logger.warning("No .mp3 files found in folder '%s'.", CALLS_SUBFOLDER_NAME)
             return []
 
         return mp3_files
 
     def download_single_file(self, file_id: str, file_name: str, local_dir: str) -> str:
         """
-        Завантажує один файл за ID у вказану локальну директорію.
-        Повертає локальний шлях до файлу.
+        Downloads a single file by ID to the specified local directory.
+        Returns the local path to the file.
         """
         os.makedirs(local_dir, exist_ok=True)
         local_path = os.path.join(local_dir, file_name)
 
-        logger.info("Завантаження файлу: %s", file_name)
+        logger.info("Downloading file: %s", file_name)
         request = self._drive_service.files().get_media(
             fileId=file_id, supportsAllDrives=True
         )
@@ -169,30 +168,30 @@ class GoogleServicesClient:
         with open(local_path, "wb") as f:
             f.write(buffer.getvalue())
 
-        logger.info("Збережено: %s", local_path)
+        logger.info("Saved: %s", local_path)
         return local_path
 
     # ------------------------------------------------------------------ #
-    #  Drive — робота з транскрипціями та копіювання
+    #  Drive - Transcriptions and Copying
     # ------------------------------------------------------------------ #
 
     def copy_file_to_folder(self, file_id: str, new_name: str, destination_folder_id: str) -> str:
         """
-        Копіює існуючий файл на Drive у вказану папку.
-        Повертає ID створеної копії.
+        Copies an existing file on Drive to the specified folder.
+        Returns the ID of the created copy.
         """
         file_metadata = {
             "name": new_name,
             "parents": [destination_folder_id]
         }
-        logger.info("Копіювання файлу '%s' у вашу робочу папку...", new_name)
+        logger.info("Copying file '%s' to the target folder...", new_name)
         response = self._drive_service.files().copy(
             fileId=file_id, body=file_metadata, supportsAllDrives=True, fields="id"
         ).execute()
         return response["id"]
 
     def upload_text_file(self, local_txt_path: str, parent_folder_id: str) -> None:
-        """Завантажує .txt файл транскрипції на Google Drive поруч з аудіо."""
+        """Uploads a .txt transcription file to Google Drive alongside the audio."""
         from googleapiclient.http import MediaFileUpload
         file_name = os.path.basename(local_txt_path)
         file_metadata = {"name": file_name, "parents": [parent_folder_id]}
@@ -201,23 +200,23 @@ class GoogleServicesClient:
             body=file_metadata, media_body=media,
             supportsAllDrives=True, fields="id"
         ).execute()
-        logger.info("Транскрипцію завантажено на Drive: %s", file_name)
+        logger.info("Transcription uploaded to Drive: %s", file_name)
 
     def get_calls_folder_id(self) -> Optional[str]:
-        """Повертає ID папки 'Дзвінки' для завантаження транскрипцій."""
+        """Returns the ID of the 'Calls' folder for uploading transcriptions."""
         return self._find_folder_id(CALLS_SUBFOLDER_NAME, SHARED_FOLDER_ID)
 
     # ------------------------------------------------------------------ #
-    #  Sheets — створення нової таблиці
+    #  Sheets - Spreadsheet Creation
     # ------------------------------------------------------------------ #
 
     def create_report_spreadsheet(self) -> gspread.Spreadsheet:
         """
-        Створює нову порожню Google Sheets таблицю напряму у папці звіту.
-        Тепер, завдяки OAuth2, файл створюється від імені користувача і використовує його квоту.
+        Creates a new empty Google Sheets document directly in the report folder.
+        Uses OAuth2 to create the file on behalf of the user using their quota.
         """
-        title = f"QA Аудит дзвінків — {datetime.now().strftime('%d.%m.%Y %H:%M')}"
-        logger.info("Створення нової таблиці: '%s' у цільовій папці...", title)
+        title = f"QA Call Audit — {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        logger.info("Creating new spreadsheet: '%s' in the target folder...", title)
 
         file_metadata = {
             "name": title,
@@ -235,6 +234,6 @@ class GoogleServicesClient:
         )
         spreadsheet_id = response["id"]
         logger.info(
-            "Таблицю '%s' створено (id=%s).", title, spreadsheet_id
+            "Spreadsheet '%s' created (id=%s).", title, spreadsheet_id
         )
         return self._gc.open_by_key(spreadsheet_id)

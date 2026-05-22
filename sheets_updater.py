@@ -1,8 +1,8 @@
 """
-Модуль для запису даних у Google Sheets та їх форматування.
+Module for writing and formatting data in Google Sheets.
 
-Відповідає за формування рядка з 21 колонки відповідно до специфікації,
-червоне форматування проблемних коментарів та підрахунок балів у підсумку.
+Responsible for assembling a 21-column row according to the specification,
+applying red formatting to problematic comments, and calculating the final score sum.
 """
 
 import logging
@@ -18,81 +18,86 @@ from analyzer import AnalysisResult
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Заголовки таблиці (21 колонка)
+#  Table Headers (21 columns)
 # ──────────────────────────────────────────────────────────────────────────────
 HEADERS = [
-    "Дата",                                        # 1
-    "Тип звернення",                               # 2
-    "Номер телефону",                              # 3
-    "Філія",                                       # 4  (порожньо за ТЗ)
-    "Менеджер",                                    # 5
-    "Початок розмови, представлення",              # 6
-    "Чи дізнався менеджер кузов автомобіля",       # 7
-    "Чи дізнався менеджер рік автомобіля",         # 8
-    "Чи дізнався менеджер пробіг",                 # 9
-    "Пропозиція про комплексну діагностику",       # 10
-    "Дізнався які роботи робилися раніше",         # 11
-    "Запис на сервіс Дата",                        # 12
-    "Завершення розмови прощання",                 # 13
-    "Яка робота з топ 100",                        # 14
-    "Чи дотримувався всіх інструкцій з топ 100",  # 15 (порожньо за ТЗ)
-    "Яких рекомендацій не дотримувався",           # 16 (порожньо за ТЗ)
-    "Результат",                                   # 17
-    "Оцінка",                                      # 18
-    "Запчастини",                                  # 19
-    "Коментар",                                    # 20
-    "Фінальний рахунок",                           # 21
+    "Дата",                                        # 1: Date
+    "Тип звернення",                               # 2: Call Type
+    "Номер телефону",                              # 3: Phone Number
+    "Філія",                                       # 4: Branch (empty per spec)
+    "Менеджер",                                    # 5: Manager Name
+    "Початок розмови, представлення",              # 6: Greeting
+    "Чи дізнався менеджер кузов автомобіля",       # 7: Car Body
+    "Чи дізнався менеджер рік автомобіля",         # 8: Car Year
+    "Чи дізнався менеджер пробіг",                 # 9: Car Mileage
+    "Пропозиція про комплексну діагностику",       # 10: Offer Diagnostics
+    "Дізнався які роботи робилися раніше",         # 11: Ask History
+    "Запис на сервіс Дата",                        # 12: Appointment Date
+    "Завершення розмови прощання",                 # 13: Farewell
+    "Яка робота з топ 100",                        # 14: Top 100 Job
+    "Чи дотримувався всіх інструкцій з топ 100",  # 15: Followed instructions (empty per spec)
+    "Яких рекомендацій не дотримувався",           # 16: Missed recommendations (empty per spec)
+    "Результат",                                   # 17: Result Status
+    "Оцінка",                                      # 18: Score
+    "Запчастини",                                  # 19: Parts Source
+    "Коментар",                                    # 20: Comment
+    "Фінальний рахунок",                           # 21: Final Score
 ]
 
-# Індекси (1-based) для форматування та формул
+# 1-based indices for formatting and formulas
 COMMENT_COL_INDEX = HEADERS.index("Коментар") + 1        # 20
 FINAL_SCORE_COL_INDEX = HEADERS.index("Фінальний рахунок") + 1  # 21
 
-# Червоний фон для проблемних коментарів (оцінка < 7)
+# Red background for problematic comments (score < 7)
 RED_COLOR = Color(red=1.0, green=0.0, blue=0.0)
 
-# Поріг оцінки: >= 7 → 1 (ОК), < 7 → 0 (проблема)
+# Score threshold: >= 7 → 1 (OK), < 7 → 0 (problem)
 SCORE_THRESHOLD = 7
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Парсинг назви файлу
+#  Filename Parsing
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _parse_filename(filename: str) -> tuple[str, str]:
     """
-    Парсить назву файлу формату: 2025-07-14_14-48_0974747746_incoming.mp3
+    Parses a filename with the format: 2025-07-14_14-48_0974747746_incoming.mp3
 
-    Повертає: (дата у форматі 'ДД.ММ.РРРР', номер_телефону).
-    Якщо шаблон не збігається — дата = поточна, номер = порожній рядок.
+    Returns: (date in 'DD.MM.YYYY' format, phone_number).
+    If the pattern doesn't match, returns the current date and an empty string.
     """
-    # Дата (перші три групи цифр через дефіс)
+    # Date (first three digit groups separated by hyphen)
     date_match = re.search(r"(\d{4})-(\d{2})-(\d{2})", filename)
     if date_match:
         year, month, day = date_match.groups()
         call_date = f"{day}.{month}.{year}"
     else:
         call_date = datetime.now().strftime("%d.%m.%Y")
-        logger.warning("Не вдалося витягти дату з назви файлу: %s", filename)
+        logger.warning("Failed to extract date from filename: %s", filename)
 
-    # Номер телефону (10 і більше цифр підряд між підкресленнями або перед крапкою)
+    # Phone number (10 or more consecutive digits between underscores or before a dot)
     phone_match = re.search(r"_(\d{10,})[_.]", filename)
     phone = phone_match.group(1) if phone_match else ""
+    
+    # To prevent Google Sheets from removing a leading 0 (treating it as a number),
+    # prepend an apostrophe to the string. It remains hidden in the UI but preserves the 0.
+    if phone:
+        phone = f"'{phone}"
 
     return call_date, phone
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  Головний клас
+#  Main Class
 # ──────────────────────────────────────────────────────────────────────────────
 
 class SheetsUpdater:
     """
-    Клас для оновлення Google Sheets таблиці результатами аналізу дзвінків.
+    Class for updating the Google Sheets spreadsheet with call analysis results.
 
-    Формує рядок із 21 елемента відповідно до специфікації та записує його
-    в таблицю. Проблемні дзвінки (оцінка < 7) виділяються червоним кольором
-    у комірці 'Коментар' для зручного реагування.
+    Formats a 21-element row according to the spec and writes it to the sheet.
+    Problematic calls (score < 7) are highlighted in red in the 'Comment' cell
+    for easy visibility.
     """
 
     def __init__(self, spreadsheet: gspread.Spreadsheet) -> None:
@@ -101,25 +106,25 @@ class SheetsUpdater:
         self._ensure_headers()
 
     # ------------------------------------------------------------------ #
-    #  Підготовка аркуша
+    #  Sheet Preparation
     # ------------------------------------------------------------------ #
 
     def _get_or_create_worksheet(self) -> gspread.Worksheet:
-        """Отримує перший аркуш або створює новий із потрібними розмірами."""
+        """Retrieves the first worksheet or creates a new one with the required dimensions."""
         try:
             return self._spreadsheet.sheet1
         except Exception:
             return self._spreadsheet.add_worksheet(title="Звіт", rows=1000, cols=25)
 
     def _ensure_headers(self) -> None:
-        """Записує заголовки у перший рядок, якщо таблиця порожня."""
+        """Writes headers to the first row if the sheet is empty."""
         first_row = self._worksheet.row_values(1)
         if not first_row:
             self._worksheet.append_row(HEADERS, value_input_option="USER_ENTERED")
-            logger.info("Заголовки таблиці (21 колонка) записано.")
+            logger.info("Table headers (21 columns) written successfully.")
 
     # ------------------------------------------------------------------ #
-    #  Додавання запису
+    #  Adding Records
     # ------------------------------------------------------------------ #
 
     def add_call_record(
@@ -129,13 +134,13 @@ class SheetsUpdater:
         analysis: AnalysisResult,
     ) -> None:
         """
-        Формує рядок із 21 елемента та додає його до таблиці.
+        Formats a 21-element row and appends it to the table.
 
-        Логіка фінального рахунку: 1 якщо оцінка >= 7, інакше 0.
-        Якщо оцінка < 7 — комірка 'Коментар' фарбується у червоний.
+        Final score logic: 1 if score >= 7, otherwise 0.
+        If score < 7, the 'Comment' cell is colored red.
 
-        Аргументи transcription_text не включається у таблицю — він вже
-        збережений у .txt файлі на Drive поруч із аудіо.
+        The `transcription_text` argument is not included in the table; it is
+        already saved in a .txt file on Drive next to the audio.
         """
         call_date, phone_number = _parse_filename(filename)
         final_score = 1 if analysis.score >= SCORE_THRESHOLD else 0
@@ -165,9 +170,9 @@ class SheetsUpdater:
         ]
 
         self._worksheet.append_row(row_data, value_input_option="USER_ENTERED")
-        logger.info("Рядок для '%s' додано до таблиці.", filename)
+        logger.info("Row for '%s' appended to the table.", filename)
 
-        # Якщо оцінка нижча за поріг — фарбуємо комірку 'Коментар' у червоний
+        # If the score is below the threshold, highlight the 'Comment' cell in red
         if analysis.score < SCORE_THRESHOLD:
             last_row = len(self._worksheet.get_all_values())
             comment_cell = rowcol_to_a1(last_row, COMMENT_COL_INDEX)
@@ -175,47 +180,47 @@ class SheetsUpdater:
                 fmt = CellFormat(backgroundColor=RED_COLOR)
                 format_cell_range(self._worksheet, comment_cell, fmt)
                 logger.info(
-                    "Комірку '%s' зафарбовано у червоний (оцінка=%d < %d).",
+                    "Cell '%s' highlighted in red (score=%d < %d).",
                     comment_cell,
                     analysis.score,
                     SCORE_THRESHOLD,
                 )
             except Exception as exc:
-                logger.warning("Не вдалося застосувати червоне форматування: %s", exc)
+                logger.warning("Failed to apply red formatting: %s", exc)
 
     # ------------------------------------------------------------------ #
-    #  Підсумкова формула
+    #  Summary Formula
     # ------------------------------------------------------------------ #
 
     def add_total_sum_formula(self) -> None:
         """
-        Додає формулу =SUM(...) у кінці стовпця 'Фінальний рахунок'
-        для підрахунку загальної кількості якісних дзвінків.
+        Appends a =SUM(...) formula at the end of the 'Final Score' column
+        to calculate the total number of quality calls.
         """
         all_values = self._worksheet.get_all_values()
         last_data_row = len(all_values)
 
         if last_data_row < 2:
-            logger.warning("Немає даних для підрахунку суми.")
+            logger.warning("No data available to calculate sum.")
             return
 
-        # Отримуємо літеру стовпця (наприклад 'U' для 21-ї колонки)
+        # Get the column letter (e.g., 'U' for the 21st column)
         col_letter = rowcol_to_a1(1, FINAL_SCORE_COL_INDEX)[:-1]
         sum_formula = f"=SUM({col_letter}2:{col_letter}{last_data_row})"
         total_row = last_data_row + 1
 
         self._worksheet.update_cell(total_row, FINAL_SCORE_COL_INDEX, sum_formula)
         logger.info(
-            "Формулу суми '%s' записано в рядок %d.",
+            "Sum formula '%s' written to row %d.",
             sum_formula,
             total_row,
         )
 
     # ------------------------------------------------------------------ #
-    #  Властивості
+    #  Properties
     # ------------------------------------------------------------------ #
 
     @property
     def spreadsheet_url(self) -> str:
-        """Повертає URL таблиці для відображення в логах."""
+        """Returns the spreadsheet URL for logging purposes."""
         return self._spreadsheet.url
